@@ -17,12 +17,14 @@ export default async function handler(req, res) {
   }
 
   if (req.method === 'POST') {
-    const { date, item_name, qty, unit, sp } = req.body;
+    const { date, item_name, qty, unit, sp, payment_method, credit_name } = req.body;
     if (!date || !item_name || !qty || !sp)
       return res.status(400).json({ error: 'date, item_name, qty, sp required' });
+    const pm = payment_method || 'cash';
+    const cn = pm === 'credit' ? (String(credit_name || '').trim() || 'Unknown') : null;
     const r = await db.run(
-      'INSERT INTO sale_entries (entry_date, item_name, qty, unit, sp) VALUES (?,?,?,?,?)',
-      [date, String(item_name).trim(), Number(qty), unit || 'pcs', Number(sp)]
+      'INSERT INTO sale_entries (entry_date, item_name, qty, unit, sp, payment_method, credit_name) VALUES (?,?,?,?,?,?,?)',
+      [date, String(item_name).trim(), Number(qty), unit || 'pcs', Number(sp), pm, cn]
     );
     const entry = await db.queryOne('SELECT * FROM sale_entries WHERE id=?', [Number(r.lastInsertRowid)]);
     return res.json({ ok: true, entry });

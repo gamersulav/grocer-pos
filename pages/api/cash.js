@@ -18,47 +18,71 @@ export default async function handler(req, res) {
 
     const yesterday = prevDate(date);
 
-    // Today's revenue (selling price total)
-    const revRow = await db.queryOne(
-      'SELECT COALESCE(SUM(qty * sp), 0) as revenue FROM sale_entries WHERE entry_date=?',
-      [date]
-    );
+    // Today's sales broken down by payment method
+    const salesByMethod = await db.queryOne(`
+      SELECT
+        COALESCE(SUM(CASE WHEN payment_method='cash'   THEN qty*sp ELSE 0 END), 0) as cash_revenue,
+        COALESCE(SUM(CASE WHEN payment_method='esewa'  THEN qty*sp ELSE 0 END), 0) as esewa_revenue,
+        COALESCE(SUM(CASE WHEN payment_method='credit' THEN qty*sp ELSE 0 END), 0) as credit_given
+      FROM sale_entries WHERE entry_date=?
+    `, [date]);
 
-    // Today's general expenses only (COGS expenses don't affect cash flow)
+    // Credit clearances for today
+    const clearRow = await db.queryOne(`
+      SELECT
+        COALESCE(SUM(CASE WHEN payment_method='cash'  THEN amount ELSE 0 END), 0) as cleared_cash,
+        COALESCE(SUM(CASE WHEN payment_method='esewa' THEN amount ELSE 0 END), 0) as cleared_esewa
+      FROM credit_clearances WHERE cleared_date=?
+    `, [date]);
+
+    // General expenses (reduce physical cash)
     const expRow = await db.queryOne(
       "SELECT COALESCE(SUM(amount), 0) as gen_exp FROM expenses WHERE expense_date=? AND type='general'",
       [date]
     );
 
-    // Today's opening from cash_ledger
+    // Today's opening
     const todayLedger = await db.queryOne('SELECT opening FROM cash_ledger WHERE ledger_date=?', [date]);
 
-    // Yesterday's data for carry-over calculation
+    // Yesterday for carry-over
     const yestLedger = await db.queryOne('SELECT opening FROM cash_ledger WHERE ledger_date=?', [yesterday]);
-    const yestRev = await db.queryOne(
-      'SELECT COALESCE(SUM(qty * sp), 0) as revenue FROM sale_entries WHERE entry_date=?',
-      [yesterday]
-    );
+    const yestSales = await db.queryOne(`
+      SELECT COALESCE(SUM(CASE WHEN payment_method='cash' THEN qty*sp ELSE 0 END), 0) as cash_rev
+      FROM sale_entries WHERE entry_date=?
+    `, [yesterday]);
+    const yestCleared = await db.queryOne(`
+      SELECT COALESCE(SUM(CASE WHEN payment_method='cash' THEN amount ELSE 0 END), 0) as cleared_cash
+      FROM credit_clearances WHERE cleared_date=?
+    `, [yesterday]);
     const yestExp = await db.queryOne(
       "SELECT COALESCE(SUM(amount), 0) as gen_exp FROM expenses WHERE expense_date=? AND type='general'",
       [yesterday]
     );
 
-    const revenue = Number(revRow.revenue);
+    const cash_revenue = Number(salesByMethod.cash_revenue);
+    const esewa_revenue = Number(salesByMethod.esewa_revenue);
+    const credit_given = Number(salesByMethod.credit_given);
+    const cleared_cash = Number(clearRow.cleared_cash);
+    const cleared_esewa = Number(clearRow.cleared_esewa);
     const gen_expenses = Number(expRow.gen_exp);
-    const opening = todayLedger ? Number(todayLedger.opening) : null;
-    const closing = opening !== null ? opening + revenue - gen_expenses : null;
 
-    // Compute yesterday's closing as suggested opening for today
+    const cash_in = cash_revenue + cleared_cash;
+    const esewa_in = esewa_revenue + cleared_esewa;
+
+    const opening = todayLedger ? Number(todayLedger.opening) : null;
+    const closing = opening !== null ? opening + cash_in - gen_expenses : null;
+
     let suggested_opening = null;
     if (opening === null && yestLedger) {
-      const yOpening = Number(yestLedger.opening);
-      const yRevenue = Number(yestRev.revenue);
-      const yGenExp = Number(yestExp.gen_exp);
-      suggested_opening = yOpening + yRevenue - yGenExp;
+      const yCashIn = Number(yestSales.cash_rev) + Number(yestCleared.cleared_cash);
+      suggested_opening = Number(yestLedger.opening) + yCashIn - Number(yestExp.gen_exp);
     }
 
-    return res.json({ date, opening, closing, revenue, gen_expenses, suggested_opening });
+    return res.json({
+      date, opening, closing, gen_expenses, suggested_opening,
+      cash_revenue, esewa_revenue, credit_given,
+      cleared_cash, cleared_esewa, cash_in, esewa_in,
+    });
   }
 
   if (req.method === 'POST') {

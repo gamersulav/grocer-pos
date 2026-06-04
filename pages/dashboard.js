@@ -102,6 +102,8 @@ export default function Dashboard() {
   const [qty, setQty] = useState('1');
   const [unit, setUnit] = useState('pcs');
   const [sp, setSp] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('cash');
+  const [creditName, setCreditName] = useState('');
   const [saleAdding, setSaleAdding] = useState(false);
   const [recentItems, setRecentItems] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -139,7 +141,7 @@ export default function Dashboard() {
     const r = await fetch('/api/sales', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date: today, item_name: itemName.trim(), qty: Number(qty) || 1, unit, sp: Number(sp) }),
+      body: JSON.stringify({ date: today, item_name: itemName.trim(), qty: Number(qty) || 1, unit, sp: Number(sp), payment_method: paymentMethod, credit_name: creditName }),
     });
     if (r.ok) {
       const { entry } = await r.json();
@@ -148,6 +150,7 @@ export default function Dashboard() {
       setItemName('');
       setQty('1');
       setSp('');
+      setCreditName('');
       setShowSuggestions(false);
       itemNameRef.current?.focus();
     }
@@ -310,6 +313,52 @@ export default function Dashboard() {
     }
   }
 
+  // ── CREDITS TAB STATE ──────────────────────────────────────────────────────
+  const [creditsData, setCreditsData] = useState({ outstanding: [], clearances: [] });
+  const [creditsLoading, setCreditsLoading] = useState(false);
+  const [collectFor, setCollectFor] = useState(null);
+  const [collectAmount, setCollectAmount] = useState('');
+  const [collectDate, setCollectDate] = useState(today);
+  const [collectMethod, setCollectMethod] = useState('cash');
+  const [collectSaving, setCollectSaving] = useState(false);
+
+  const loadCredits = useCallback(async () => {
+    setCreditsLoading(true);
+    const r = await fetch('/api/credits');
+    if (r.ok) setCreditsData(await r.json());
+    setCreditsLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (tab === 'credits') loadCredits();
+  }, [tab, loadCredits]);
+
+  async function saveCollect(e) {
+    e.preventDefault();
+    if (!collectAmount || Number(collectAmount) <= 0) return;
+    setCollectSaving(true);
+    const r = await fetch('/api/credits', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ credit_name: collectFor, amount: Number(collectAmount), cleared_date: collectDate, payment_method: collectMethod }),
+    });
+    if (r.ok) {
+      showToast('Payment collected ✓');
+      setCollectFor(null);
+      setCollectAmount('');
+      setCollectDate(today);
+      setCollectMethod('cash');
+      loadCredits();
+    }
+    setCollectSaving(false);
+  }
+
+  async function deleteClearance(id) {
+    if (!confirm('Delete this record?')) return;
+    const r = await fetch(`/api/credits/${id}`, { method: 'DELETE' });
+    if (r.ok) { showToast('Deleted'); loadCredits(); }
+  }
+
   // ── REPORTS TAB STATE ───────────────────────────────────────────────────────
   const [period, setPeriod] = useState('today');
   const [report, setReport] = useState(null);
@@ -395,7 +444,8 @@ export default function Dashboard() {
     { key: 'sale', icon: '🛒', label: 'Sale' },
     { key: 'eod', icon: '📋', label: 'Cost' },
     { key: 'cash', icon: '💵', label: 'Cash' },
-    { key: 'expenses', icon: '💸', label: 'Expenses' },
+    { key: 'expenses', icon: '💸', label: 'Exp.' },
+    { key: 'credits', icon: '💳', label: 'Credits' },
     { key: 'reports', icon: '📊', label: 'Reports' },
   ];
 
@@ -492,14 +542,34 @@ export default function Dashboard() {
                   />
                 </div>
 
+                {/* Payment method */}
+                <div style={{ display: 'flex', background: '#f3f4f6', borderRadius: 10, padding: 3, marginBottom: 10, gap: 3 }}>
+                  {[['cash', '💵 Cash'], ['esewa', '📱 eSewa'], ['credit', '📒 Credit']].map(([val, label]) => (
+                    <button key={val} type="button" onClick={() => setPaymentMethod(val)}
+                      style={{ flex: 1, padding: '9px 4px', background: paymentMethod === val ? '#fff' : 'transparent', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: paymentMethod === val ? 700 : 500, color: paymentMethod === val ? (val === 'credit' ? '#dc2626' : val === 'esewa' ? '#7c3aed' : '#1d6e3c') : '#6b7280', boxShadow: paymentMethod === val ? '0 1px 4px rgba(0,0,0,0.1)' : 'none', cursor: 'pointer' }}>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+
+                {paymentMethod === 'credit' && (
+                  <input
+                    type="text"
+                    placeholder="Customer name (required)"
+                    value={creditName}
+                    onChange={e => setCreditName(e.target.value)}
+                    style={{ width: '100%', padding: '11px 14px', border: '2px solid #fca5a5', borderRadius: 10, fontSize: 15, outline: 'none', marginBottom: 10, background: '#fff7f7' }}
+                  />
+                )}
+
                 {itemName && sp && (
                   <div style={{ background: '#f0fdf4', borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 14, color: '#16a34a', fontWeight: 600 }}>
                     Total: {fmt((Number(qty) || 1) * Number(sp))}
                   </div>
                 )}
 
-                <button type="submit" disabled={saleAdding || !itemName.trim() || !sp}
-                  style={{ width: '100%', padding: '14px', background: saleAdding || !itemName.trim() || !sp ? '#d1fae5' : '#16a34a', color: '#fff', border: 'none', borderRadius: 10, fontSize: 17, fontWeight: 700, cursor: 'pointer' }}>
+                <button type="submit" disabled={saleAdding || !itemName.trim() || !sp || (paymentMethod === 'credit' && !creditName.trim())}
+                  style={{ width: '100%', padding: '14px', background: (saleAdding || !itemName.trim() || !sp || (paymentMethod === 'credit' && !creditName.trim())) ? '#d1fae5' : '#16a34a', color: '#fff', border: 'none', borderRadius: 10, fontSize: 17, fontWeight: 700, cursor: 'pointer' }}>
                   {saleAdding ? 'Adding...' : '✓ Add Entry'}
                 </button>
               </form>
@@ -527,10 +597,17 @@ export default function Dashboard() {
                     ) : (
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: i < entries.length - 1 ? '1px solid #f9fafb' : 'none' }}>
                         <div style={{ flex: 1 }}>
-                          <div style={{ fontSize: 15, fontWeight: 600, color: '#111827' }}>{e.item_name}</div>
-                          <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>{Number(e.qty)} {e.unit} × {fmt(e.sp)}</div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ fontSize: 15, fontWeight: 600, color: '#111827' }}>{e.item_name}</span>
+                            {e.payment_method === 'esewa' && <span style={{ fontSize: 10, fontWeight: 700, background: '#ede9fe', color: '#7c3aed', borderRadius: 4, padding: '1px 5px' }}>eSewa</span>}
+                            {e.payment_method === 'credit' && <span style={{ fontSize: 10, fontWeight: 700, background: '#fee2e2', color: '#dc2626', borderRadius: 4, padding: '1px 5px' }}>Credit</span>}
+                          </div>
+                          <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
+                            {Number(e.qty)} {e.unit} × {fmt(e.sp)}
+                            {e.credit_name && <span style={{ color: '#dc2626' }}> · {e.credit_name}</span>}
+                          </div>
                         </div>
-                        <div style={{ fontWeight: 700, fontSize: 15, color: '#1d6e3c', marginRight: 10 }}>{fmt(Number(e.qty) * Number(e.sp))}</div>
+                        <div style={{ fontWeight: 700, fontSize: 15, color: e.payment_method === 'credit' ? '#dc2626' : '#1d6e3c', marginRight: 10 }}>{fmt(Number(e.qty) * Number(e.sp))}</div>
                         <div style={{ display: 'flex', gap: 4 }}>
                           <button onClick={() => { setEditId(e.id); setEditQty(String(e.qty)); setEditSp(String(e.sp)); }}
                             style={{ padding: '6px 10px', background: '#eff6ff', border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', color: '#2563eb' }}>✏️</button>
@@ -716,32 +793,50 @@ export default function Dashboard() {
                   )}
                 </Card>
 
-                {/* Summary */}
+                {/* Cash summary */}
                 {cashData.opening !== null && (
                   <Card>
-                    <SectionTitle>Today's Summary</SectionTitle>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <SectionTitle>Cash Flow — {fmtDateFull(today)}</SectionTitle>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                       {[
-                        { label: 'Opening Balance', value: cashData.opening, color: '#1e3a5f' },
-                        { label: 'Sales Revenue', value: cashData.revenue, color: '#16a34a', prefix: '+ ' },
-                        { label: 'General Expenses', value: cashData.gen_expenses, color: '#dc2626', prefix: '- ' },
+                        { label: 'Opening Balance', value: cashData.opening, color: '#1e3a5f', bold: false },
+                        { label: '+ Cash Sales', value: cashData.cash_revenue, color: '#16a34a', bold: false },
+                        { label: '+ Credits Collected (Cash)', value: cashData.cleared_cash, color: '#16a34a', bold: false },
+                        { label: '- General Expenses', value: cashData.gen_expenses, color: '#dc2626', bold: false },
                       ].map(row => (
-                        <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #f3f4f6' }}>
+                        <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 0', borderBottom: '1px solid #f3f4f6' }}>
                           <span style={{ fontSize: 14, color: '#374151' }}>{row.label}</span>
-                          <span style={{ fontSize: 15, fontWeight: 700, color: row.color }}>{row.prefix || ''}{fmt(row.value)}</span>
+                          <span style={{ fontSize: 14, fontWeight: 700, color: row.color }}>{fmt(row.value)}</span>
                         </div>
                       ))}
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', marginTop: 2 }}>
-                        <span style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>Closing Balance</span>
+                        <span style={{ fontSize: 16, fontWeight: 700, color: '#111827' }}>Cash Closing</span>
                         <span style={{ fontSize: 22, fontWeight: 800, color: '#1d6e3c' }}>{fmt(cashData.closing)}</span>
                       </div>
                     </div>
                   </Card>
                 )}
 
+                {/* eSewa & Credit info cards */}
+                {cashData.opening !== null && (
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+                    <Card style={{ padding: '14px', marginBottom: 0 }}>
+                      <div style={{ fontSize: 11, color: '#7c3aed', fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>eSewa In</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: '#7c3aed' }}>{fmt(cashData.esewa_in)}</div>
+                      <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>Sales: {fmt(cashData.esewa_revenue)}</div>
+                      {cashData.cleared_esewa > 0 && <div style={{ fontSize: 11, color: '#9ca3af' }}>Collected: {fmt(cashData.cleared_esewa)}</div>}
+                    </Card>
+                    <Card style={{ padding: '14px', marginBottom: 0 }}>
+                      <div style={{ fontSize: 11, color: '#dc2626', fontWeight: 700, textTransform: 'uppercase', marginBottom: 4 }}>Credit Given</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, color: '#dc2626' }}>{fmt(cashData.credit_given)}</div>
+                      <div style={{ fontSize: 11, color: '#9ca3af', marginTop: 4 }}>Not yet collected</div>
+                    </Card>
+                  </div>
+                )}
+
                 {cashData.opening !== null && (
                   <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 12, padding: '12px 14px', fontSize: 13, color: '#166534' }}>
-                    ℹ️ This closing balance will automatically carry over as tomorrow's opening balance.
+                    ℹ️ Cash closing carries over as tomorrow's opening. eSewa and credit are separate.
                   </div>
                 )}
               </>
@@ -824,6 +919,111 @@ export default function Dashboard() {
 
             {expenses.length === 0 && (
               <div style={{ textAlign: 'center', padding: '2rem', color: '#9ca3af', fontSize: 14 }}>No expenses recorded for this date</div>
+            )}
+          </div>
+        )}
+
+        {/* ── CREDITS TAB ──────────────────────────────────────────────── */}
+        {tab === 'credits' && (
+          <div style={{ padding: '14px' }}>
+            {creditsLoading && <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>Loading...</div>}
+
+            {!creditsLoading && creditsData.outstanding.length === 0 && creditsData.clearances.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '3rem 1rem', color: '#9ca3af' }}>
+                <div style={{ fontSize: 48, marginBottom: 12 }}>💳</div>
+                <div style={{ fontSize: 16 }}>No outstanding credits</div>
+                <div style={{ fontSize: 14, marginTop: 6 }}>Credits from sales will appear here</div>
+              </div>
+            )}
+
+            {/* Collect form modal */}
+            {collectFor && (
+              <>
+                <div onClick={() => setCollectFor(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 200 }} />
+                <div style={{ position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 520, background: '#fff', borderRadius: '20px 20px 0 0', padding: '24px 20px 36px', zIndex: 201 }}>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: '#111827', marginBottom: 4 }}>Collect from {collectFor}</div>
+                  <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 18 }}>
+                    Outstanding: {fmt(creditsData.outstanding.find(o => o.credit_name === collectFor)?.outstanding || 0)}
+                  </div>
+                  <form onSubmit={saveCollect}>
+                    <input type="number" placeholder="Amount collected (Rs)" value={collectAmount}
+                      onChange={e => setCollectAmount(e.target.value)} onFocus={e => e.target.select()}
+                      min="1" step="any" required autoFocus
+                      style={{ width: '100%', padding: '13px 14px', border: '2px solid #e5e7eb', borderRadius: 10, fontSize: 17, outline: 'none', marginBottom: 10 }} />
+                    <input type="date" value={collectDate} onChange={e => setCollectDate(e.target.value)}
+                      style={{ width: '100%', padding: '11px 14px', border: '2px solid #e5e7eb', borderRadius: 10, fontSize: 15, outline: 'none', marginBottom: 10 }} />
+                    <div style={{ display: 'flex', background: '#f3f4f6', borderRadius: 10, padding: 3, marginBottom: 16, gap: 3 }}>
+                      {[['cash', '💵 Cash'], ['esewa', '📱 eSewa']].map(([val, label]) => (
+                        <button key={val} type="button" onClick={() => setCollectMethod(val)}
+                          style={{ flex: 1, padding: '10px', background: collectMethod === val ? '#fff' : 'transparent', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: collectMethod === val ? 700 : 500, color: collectMethod === val ? (val === 'esewa' ? '#7c3aed' : '#16a34a') : '#6b7280', boxShadow: collectMethod === val ? '0 1px 4px rgba(0,0,0,0.1)' : 'none', cursor: 'pointer' }}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button type="button" onClick={() => setCollectFor(null)}
+                        style={{ flex: 1, padding: '13px', background: '#f3f4f6', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+                      <button type="submit" disabled={collectSaving}
+                        style={{ flex: 2, padding: '13px', background: collectSaving ? '#9ca3af' : '#16a34a', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 700, cursor: 'pointer' }}>
+                        {collectSaving ? 'Saving...' : '✓ Record Collection'}
+                      </button>
+                    </div>
+                  </form>
+                </div>
+              </>
+            )}
+
+            {/* Outstanding credits list */}
+            {creditsData.outstanding.length > 0 && (
+              <Card style={{ padding: 0, overflow: 'hidden', marginBottom: 12 }}>
+                <div style={{ padding: '12px 16px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <SectionTitle>Outstanding Credits</SectionTitle>
+                  <span style={{ fontSize: 14, fontWeight: 800, color: '#dc2626' }}>
+                    {fmt(creditsData.outstanding.reduce((s, o) => s + o.outstanding, 0))}
+                  </span>
+                </div>
+                {creditsData.outstanding.map((o, i) => (
+                  <div key={o.credit_name} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: i < creditsData.outstanding.length - 1 ? '1px solid #f9fafb' : 'none' }}>
+                    <div>
+                      <div style={{ fontSize: 15, fontWeight: 700, color: '#111827' }}>{o.credit_name}</div>
+                      <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 2 }}>
+                        Total: {fmt(o.total_credit)} · Paid: {fmt(o.total_cleared)}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 16, fontWeight: 800, color: '#dc2626' }}>{fmt(o.outstanding)}</span>
+                      <button onClick={() => { setCollectFor(o.credit_name); setCollectAmount(String(Math.round(o.outstanding))); }}
+                        style={{ padding: '8px 12px', background: '#f0fdf4', border: '1.5px solid #16a34a', borderRadius: 8, fontSize: 13, fontWeight: 700, color: '#16a34a', cursor: 'pointer' }}>
+                        Collect
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </Card>
+            )}
+
+            {/* Clearance history */}
+            {creditsData.clearances.length > 0 && (
+              <Card style={{ padding: 0, overflow: 'hidden' }}>
+                <div style={{ padding: '12px 16px', borderBottom: '1px solid #f3f4f6' }}>
+                  <SectionTitle>Collection History</SectionTitle>
+                </div>
+                {creditsData.clearances.map((c, i) => (
+                  <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', borderBottom: i < creditsData.clearances.length - 1 ? '1px solid #f9fafb' : 'none' }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>{c.credit_name}</div>
+                      <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 2 }}>
+                        {fmtDateFull(c.cleared_date)} · {c.payment_method === 'esewa' ? '📱 eSewa' : '💵 Cash'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 14, fontWeight: 700, color: '#16a34a' }}>{fmt(c.amount)}</span>
+                      <button onClick={() => deleteClearance(c.id)}
+                        style={{ padding: '5px 9px', background: '#fef2f2', border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', color: '#dc2626' }}>🗑️</button>
+                    </div>
+                  </div>
+                ))}
+              </Card>
             )}
           </div>
         )}
