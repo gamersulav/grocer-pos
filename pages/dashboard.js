@@ -27,6 +27,13 @@ function fmtDateFull(d) {
   return `${Number(day)} ${months[Number(m) - 1]} ${y}`;
 }
 
+function fmtMonth(d) {
+  if (!d) return '';
+  const [y, m] = d.split('-');
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  return `${months[Number(m) - 1]} ${y}`;
+}
+
 function weekStart() {
   const d = new Date();
   const day = d.getDay();
@@ -308,16 +315,36 @@ export default function Dashboard() {
   const [report, setReport] = useState(null);
   const [reportLoading, setReportLoading] = useState(false);
   const [showEntries, setShowEntries] = useState(false);
+  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
 
   const loadReport = useCallback(async (p) => {
     setReportLoading(true);
     const t = localDate();
-    const start = p === 'today' ? t : p === 'week' ? weekStart() : monthStart();
-    const r = await fetch(`/api/reports?start=${start}&end=${t}`);
+    let start, end, groupBy;
+    if (p === 'today') {
+      start = t; end = t;
+    } else if (p === 'week') {
+      start = weekStart(); end = t;
+    } else if (p === 'month') {
+      start = monthStart(); end = t;
+    } else if (p === 'monthly') {
+      const mo = String(selectedMonth).padStart(2, '0');
+      const lastDay = new Date(selectedYear, selectedMonth, 0).getDate();
+      start = `${selectedYear}-${mo}-01`;
+      end = `${selectedYear}-${mo}-${String(lastDay).padStart(2, '0')}`;
+    } else if (p === 'yearly') {
+      start = `${selectedYear}-01-01`;
+      end = `${selectedYear}-12-31`;
+      groupBy = 'month';
+    }
+    const qs = new URLSearchParams({ start, end });
+    if (groupBy) qs.set('groupBy', groupBy);
+    const r = await fetch(`/api/reports?${qs}`);
     if (r.status === 401) { router.push('/'); return; }
     setReport(await r.json());
     setReportLoading(false);
-  }, [router]);
+  }, [router, selectedMonth, selectedYear]);
 
   useEffect(() => {
     if (tab === 'reports') loadReport(period);
@@ -804,15 +831,52 @@ export default function Dashboard() {
         {/* ── REPORTS TAB ──────────────────────────────────────────────── */}
         {tab === 'reports' && (
           <div style={{ padding: '14px' }}>
-            {/* Period selector */}
-            <div style={{ display: 'flex', background: '#fff', borderRadius: 12, padding: 4, marginBottom: 14, gap: 4, boxShadow: '0 1px 8px rgba(0,0,0,0.08)' }}>
+            {/* Period selector row 1 */}
+            <div style={{ display: 'flex', background: '#fff', borderRadius: 12, padding: 4, marginBottom: 4, gap: 4, boxShadow: '0 1px 8px rgba(0,0,0,0.08)' }}>
               {[['today', 'Today'], ['week', 'This Week'], ['month', 'This Month']].map(([val, label]) => (
-                <button key={val} onClick={() => { setPeriod(val); loadReport(val); setShowEntries(false); }}
+                <button key={val} onClick={() => { setPeriod(val); setShowEntries(false); }}
                   style={{ flex: 1, padding: '10px 4px', background: period === val ? '#1e3a5f' : 'transparent', color: period === val ? '#fff' : '#6b7280', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: period === val ? 700 : 500, cursor: 'pointer' }}>
                   {label}
                 </button>
               ))}
             </div>
+            {/* Period selector row 2 */}
+            <div style={{ display: 'flex', background: '#fff', borderRadius: 12, padding: 4, marginBottom: 10, gap: 4, boxShadow: '0 1px 8px rgba(0,0,0,0.08)' }}>
+              {[['monthly', 'Monthly'], ['yearly', 'Yearly']].map(([val, label]) => (
+                <button key={val} onClick={() => { setPeriod(val); setShowEntries(false); }}
+                  style={{ flex: 1, padding: '10px 4px', background: period === val ? '#1e3a5f' : 'transparent', color: period === val ? '#fff' : '#6b7280', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: period === val ? 700 : 500, cursor: 'pointer' }}>
+                  {label}
+                </button>
+              ))}
+            </div>
+            {/* Month + year picker */}
+            {period === 'monthly' && (
+              <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+                <select value={selectedMonth} onChange={e => setSelectedMonth(Number(e.target.value))}
+                  style={{ flex: 1, padding: '10px 12px', border: '2px solid #e5e7eb', borderRadius: 10, fontSize: 15, background: '#fff' }}>
+                  {['January','February','March','April','May','June','July','August','September','October','November','December'].map((m, i) => (
+                    <option key={i + 1} value={i + 1}>{m}</option>
+                  ))}
+                </select>
+                <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))}
+                  style={{ width: 100, padding: '10px 12px', border: '2px solid #e5e7eb', borderRadius: 10, fontSize: 15, background: '#fff' }}>
+                  {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(y => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {/* Year picker */}
+            {period === 'yearly' && (
+              <div style={{ marginBottom: 14 }}>
+                <select value={selectedYear} onChange={e => setSelectedYear(Number(e.target.value))}
+                  style={{ width: '100%', padding: '10px 12px', border: '2px solid #e5e7eb', borderRadius: 10, fontSize: 15, background: '#fff' }}>
+                  {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(y => (
+                    <option key={y} value={y}>{y}</option>
+                  ))}
+                </select>
+              </div>
+            )}
 
             {reportLoading && <div style={{ textAlign: 'center', padding: '3rem', color: '#9ca3af' }}>Loading...</div>}
 
@@ -874,20 +938,21 @@ export default function Dashboard() {
                   </Card>
                 )}
 
-                {/* Daily breakdown (week/month) */}
+                {/* Daily/Monthly breakdown */}
                 {period !== 'today' && report.daily.length > 0 && (
                   <Card style={{ padding: 0, overflow: 'hidden' }}>
                     <div style={{ padding: '12px 16px', borderBottom: '1px solid #f3f4f6' }}>
-                      <SectionTitle>Daily Breakdown</SectionTitle>
+                      <SectionTitle>{period === 'yearly' ? 'Monthly Breakdown' : 'Daily Breakdown'}</SectionTitle>
                     </div>
                     {report.daily.map((day, i) => {
                       const dayExp = report.dailyExp.filter(e => e.date === day.date && e.type === 'general').reduce((s, e) => s + Number(e.total), 0);
                       const hasAllCp = Number(day.items_with_cp) === Number(day.items);
                       const profit = hasAllCp ? Number(day.revenue) - Number(day.cost) - dayExp : null;
+                      const label = period === 'yearly' ? fmtMonth(day.date) : fmtDateFull(day.date);
                       return (
                         <div key={day.date} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', borderBottom: i < report.daily.length - 1 ? '1px solid #f9fafb' : 'none' }}>
                           <div>
-                            <div style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>{fmtDateFull(day.date)}</div>
+                            <div style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>{label}</div>
                             <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 2 }}>{Number(day.items)} items</div>
                           </div>
                           <div style={{ textAlign: 'right' }}>

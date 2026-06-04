@@ -6,8 +6,12 @@ export default async function handler(req, res) {
   if (!session) return res.status(401).json({ error: 'Unauthorized' });
   const db = await getDb();
 
-  const { start, end } = req.query;
+  const { start, end, groupBy } = req.query;
   if (!start || !end) return res.status(400).json({ error: 'start and end dates required' });
+
+  const byMonth = groupBy === 'month';
+  const periodField = byMonth ? "strftime('%Y-%m', entry_date)" : "entry_date";
+  const expPeriodField = byMonth ? "strftime('%Y-%m', expense_date)" : "expense_date";
 
   // Summary totals
   const summary = await db.queryOne(`
@@ -27,23 +31,23 @@ export default async function handler(req, res) {
     FROM expenses WHERE expense_date >= ? AND expense_date <= ?
   `, [start, end]);
 
-  // Daily breakdown
+  // Daily/monthly breakdown
   const daily = await db.query(`
     SELECT
-      entry_date as date,
+      ${periodField} as date,
       COALESCE(SUM(qty * sp), 0) as revenue,
       COALESCE(SUM(CASE WHEN cp IS NOT NULL THEN qty * cp ELSE 0 END), 0) as cost,
       COUNT(*) as items,
       SUM(CASE WHEN cp IS NOT NULL THEN 1 ELSE 0 END) as items_with_cp
     FROM sale_entries WHERE entry_date >= ? AND entry_date <= ?
-    GROUP BY entry_date ORDER BY entry_date DESC
+    GROUP BY ${periodField} ORDER BY date DESC
   `, [start, end]);
 
-  // Daily expenses
+  // Daily/monthly expenses
   const dailyExp = await db.query(`
-    SELECT expense_date as date, type, COALESCE(SUM(amount), 0) as total
+    SELECT ${expPeriodField} as date, type, COALESCE(SUM(amount), 0) as total
     FROM expenses WHERE expense_date >= ? AND expense_date <= ?
-    GROUP BY expense_date, type ORDER BY expense_date DESC
+    GROUP BY ${expPeriodField}, type ORDER BY date DESC
   `, [start, end]);
 
   // Top items by revenue
