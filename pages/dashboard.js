@@ -102,9 +102,6 @@ export default function Dashboard() {
   const [qty, setQty] = useState('1');
   const [unit, setUnit] = useState('pcs');
   const [sp, setSp] = useState('');
-  const [paymentMethod, setPaymentMethod] = useState('cash');
-  const [creditName, setCreditName] = useState('');
-  const [saleAdding, setSaleAdding] = useState(false);
   const [recentItems, setRecentItems] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [todayTotal, setTodayTotal] = useState(0);
@@ -112,6 +109,13 @@ export default function Dashboard() {
   const [editQty, setEditQty] = useState('');
   const [editSp, setEditSp] = useState('');
   const itemNameRef = useRef(null);
+
+  // Cart state — items added locally before "Save Bill"
+  const [cart, setCart] = useState([]);
+  const [cartPayment, setCartPayment] = useState('cash');
+  const [cartCreditName, setCartCreditName] = useState('');
+  const [cartSaving, setCartSaving] = useState(false);
+  const cartTotal = cart.reduce((s, i) => s + i.qty * i.sp, 0);
 
   const loadSaleEntries = useCallback(async () => {
     const r = await fetch(`/api/sales?date=${today}`);
@@ -134,27 +138,41 @@ export default function Dashboard() {
     ? recentItems.filter(i => i.item_name.toLowerCase().includes(itemName.toLowerCase()))
     : recentItems.slice(0, 8);
 
-  async function addEntry(e) {
+  function addToCart(e) {
     e.preventDefault();
     if (!itemName.trim() || !sp || Number(sp) <= 0) return;
-    setSaleAdding(true);
-    const r = await fetch('/api/sales', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date: today, item_name: itemName.trim(), qty: Number(qty) || 1, unit, sp: Number(sp), payment_method: paymentMethod, credit_name: creditName }),
-    });
-    if (r.ok) {
-      const { entry } = await r.json();
-      setEntries(prev => [entry, ...prev]);
-      setTodayTotal(prev => prev + Number(entry.qty) * Number(entry.sp));
-      setItemName('');
-      setQty('1');
-      setSp('');
-      setCreditName('');
-      setShowSuggestions(false);
-      itemNameRef.current?.focus();
+    setCart(prev => [...prev, { _id: Date.now(), item_name: itemName.trim(), qty: Number(qty) || 1, unit, sp: Number(sp) }]);
+    setItemName('');
+    setQty('1');
+    setSp('');
+    setShowSuggestions(false);
+    itemNameRef.current?.focus();
+  }
+
+  function removeFromCart(id) {
+    setCart(prev => prev.filter(i => i._id !== id));
+  }
+
+  async function saveCart() {
+    if (!cart.length) return;
+    if (cartPayment === 'credit' && !cartCreditName.trim()) { showToast('Enter customer name'); return; }
+    setCartSaving(true);
+    const results = await Promise.all(cart.map(item =>
+      fetch('/api/sales', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ date: today, item_name: item.item_name, qty: item.qty, unit: item.unit, sp: item.sp, payment_method: cartPayment, credit_name: cartCreditName }),
+      }).then(r => r.json())
+    ));
+    const saved = results.filter(r => r.ok).map(r => r.entry);
+    if (saved.length) {
+      setEntries(prev => [...saved.slice().reverse(), ...prev]);
+      setTodayTotal(prev => prev + saved.reduce((s, e) => s + Number(e.qty) * Number(e.sp), 0));
+      setCart([]);
+      setCartCreditName('');
+      showToast(`${saved.length} item${saved.length > 1 ? 's' : ''} saved ✓`);
     }
-    setSaleAdding(false);
+    setCartSaving(false);
   }
 
   async function deleteEntry(id, total) {
@@ -474,40 +492,44 @@ export default function Dashboard() {
 
         {/* ── SALE TAB ────────────────────────────────────────────────── */}
         {tab === 'sale' && (
-          <div style={{ padding: '14px' }}>
+          <div style={{ padding: '12px' }}>
+
             {/* Today's total banner */}
-            <div style={{ background: 'linear-gradient(135deg, #1d6e3c, #16a34a)', borderRadius: 16, padding: '14px 18px', marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div style={{ background: 'linear-gradient(135deg, #1d6e3c, #16a34a)', borderRadius: 14, padding: '14px 16px', marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 12, fontWeight: 600 }}>TODAY'S SALES TOTAL</div>
-                <div style={{ color: '#fff', fontSize: 26, fontWeight: 800, marginTop: 2 }}>{fmt(todayTotal)}</div>
+                <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11, fontWeight: 600, letterSpacing: '0.5px' }}>TODAY'S SALES</div>
+                <div style={{ color: '#fff', fontSize: 28, fontWeight: 800, marginTop: 1, letterSpacing: '-0.5px' }}>{fmt(todayTotal)}</div>
               </div>
-              <div style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13 }}>{entries.length} item{entries.length !== 1 ? 's' : ''}</div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>{entries.length} saved</div>
+                {cart.length > 0 && <div style={{ color: '#bbf7d0', fontSize: 12, fontWeight: 700 }}>{cart.length} in cart</div>}
+              </div>
             </div>
 
-            {/* Add entry form */}
-            <Card>
-              <SectionTitle>Add Sale Entry</SectionTitle>
-              <form onSubmit={addEntry}>
-                {/* Item name with suggestions */}
-                <div style={{ position: 'relative', marginBottom: 10 }}>
+            {/* ── Add item form ── */}
+            <div style={{ background: '#fff', borderRadius: 14, padding: '14px', boxShadow: '0 1px 8px rgba(0,0,0,0.07)', marginBottom: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10 }}>Add Item to Bill</div>
+              <form onSubmit={addToCart}>
+                {/* Item name autocomplete */}
+                <div style={{ position: 'relative', marginBottom: 8 }}>
                   <input
                     ref={itemNameRef}
                     type="text"
-                    placeholder="Item name (e.g. Rice, Sugar, Oil)"
+                    placeholder="Item name"
                     value={itemName}
                     onChange={e => { setItemName(e.target.value); setShowSuggestions(true); }}
                     onFocus={() => setShowSuggestions(true)}
                     onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
                     autoComplete="off"
-                    style={{ width: '100%', padding: '13px 14px', border: '2px solid #e5e7eb', borderRadius: 10, fontSize: 16, outline: 'none' }}
+                    style={{ width: '100%', padding: '12px 14px', border: '2px solid #e5e7eb', borderRadius: 10, fontSize: 16, outline: 'none', boxSizing: 'border-box' }}
                   />
                   {showSuggestions && filteredSuggestions.length > 0 && (
-                    <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, boxShadow: '0 4px 20px rgba(0,0,0,0.12)', zIndex: 100, maxHeight: 200, overflowY: 'auto' }}>
+                    <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, boxShadow: '0 6px 24px rgba(0,0,0,0.12)', zIndex: 100, maxHeight: 200, overflowY: 'auto' }}>
                       {filteredSuggestions.map((item, i) => (
                         <div key={i}
-                          onMouseDown={() => { setItemName(item.item_name); setUnit(item.unit || 'pcs'); setShowSuggestions(false); setTimeout(() => document.querySelector('input[placeholder="Qty"]')?.focus(), 50); }}
-                          style={{ padding: '11px 14px', fontSize: 15, cursor: 'pointer', borderBottom: i < filteredSuggestions.length - 1 ? '1px solid #f3f4f6' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span>{item.item_name}</span>
+                          onMouseDown={() => { setItemName(item.item_name); setUnit(item.unit || 'pcs'); setShowSuggestions(false); setTimeout(() => document.getElementById('qty-input')?.focus(), 50); }}
+                          style={{ padding: '12px 14px', fontSize: 15, cursor: 'pointer', borderBottom: i < filteredSuggestions.length - 1 ? '1px solid #f3f4f6' : 'none', display: 'flex', justifyContent: 'space-between' }}>
+                          <span style={{ fontWeight: 500 }}>{item.item_name}</span>
                           <span style={{ fontSize: 12, color: '#9ca3af' }}>{item.unit}</span>
                         </div>
                       ))}
@@ -515,121 +537,133 @@ export default function Dashboard() {
                   )}
                 </div>
 
-                <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-                  <input
-                    type="number"
-                    placeholder="Qty"
-                    value={qty}
-                    onChange={e => setQty(e.target.value)}
-                    onFocus={e => e.target.select()}
-                    min="0.01"
-                    step="any"
-                    style={{ flex: 1, padding: '13px 10px', border: '2px solid #e5e7eb', borderRadius: 10, fontSize: 16, outline: 'none', textAlign: 'center' }}
-                  />
+                {/* Qty / Unit / Price */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.4fr', gap: 6, marginBottom: 10 }}>
+                  <input id="qty-input" type="number" placeholder="Qty" value={qty}
+                    onChange={e => setQty(e.target.value)} onFocus={e => e.target.select()}
+                    min="0.01" step="any"
+                    style={{ padding: '12px 8px', border: '2px solid #e5e7eb', borderRadius: 10, fontSize: 16, outline: 'none', textAlign: 'center', width: '100%', boxSizing: 'border-box' }} />
                   <select value={unit} onChange={e => setUnit(e.target.value)}
-                    style={{ flex: 1, padding: '13px 8px', border: '2px solid #e5e7eb', borderRadius: 10, fontSize: 15, background: '#fff' }}>
+                    style={{ padding: '12px 6px', border: '2px solid #e5e7eb', borderRadius: 10, fontSize: 14, background: '#fff', width: '100%', boxSizing: 'border-box' }}>
                     {UNITS.map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
-                  <input
-                    type="number"
-                    placeholder="Price (Rs)"
-                    value={sp}
-                    onChange={e => setSp(e.target.value)}
-                    onFocus={e => e.target.select()}
-                    min="0"
-                    step="any"
-                    style={{ flex: 2, padding: '13px 10px', border: '2px solid #e5e7eb', borderRadius: 10, fontSize: 16, outline: 'none' }}
-                  />
+                  <input type="number" placeholder="Price" value={sp}
+                    onChange={e => setSp(e.target.value)} onFocus={e => e.target.select()}
+                    min="0" step="any"
+                    style={{ padding: '12px 10px', border: '2px solid #e5e7eb', borderRadius: 10, fontSize: 16, outline: 'none', width: '100%', boxSizing: 'border-box' }} />
                 </div>
 
-                {/* Payment method */}
-                <div style={{ display: 'flex', background: '#f3f4f6', borderRadius: 10, padding: 3, marginBottom: 10, gap: 3 }}>
-                  {[['cash', '💵 Cash'], ['esewa', '📱 eSewa'], ['credit', '📒 Credit']].map(([val, label]) => (
-                    <button key={val} type="button" onClick={() => setPaymentMethod(val)}
-                      style={{ flex: 1, padding: '9px 4px', background: paymentMethod === val ? '#fff' : 'transparent', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: paymentMethod === val ? 700 : 500, color: paymentMethod === val ? (val === 'credit' ? '#dc2626' : val === 'esewa' ? '#7c3aed' : '#1d6e3c') : '#6b7280', boxShadow: paymentMethod === val ? '0 1px 4px rgba(0,0,0,0.1)' : 'none', cursor: 'pointer' }}>
-                      {label}
-                    </button>
-                  ))}
-                </div>
-
-                {paymentMethod === 'credit' && (
-                  <input
-                    type="text"
-                    placeholder="Customer name (required)"
-                    value={creditName}
-                    onChange={e => setCreditName(e.target.value)}
-                    style={{ width: '100%', padding: '11px 14px', border: '2px solid #fca5a5', borderRadius: 10, fontSize: 15, outline: 'none', marginBottom: 10, background: '#fff7f7' }}
-                  />
-                )}
-
-                {itemName && sp && (
-                  <div style={{ background: '#f0fdf4', borderRadius: 8, padding: '8px 12px', marginBottom: 10, fontSize: 14, color: '#16a34a', fontWeight: 600 }}>
-                    Total: {fmt((Number(qty) || 1) * Number(sp))}
+                {itemName.trim() && sp && Number(sp) > 0 && (
+                  <div style={{ background: '#f0fdf4', borderRadius: 8, padding: '7px 12px', marginBottom: 8, fontSize: 13, color: '#16a34a', fontWeight: 600 }}>
+                    = {fmt((Number(qty) || 1) * Number(sp))}
                   </div>
                 )}
 
-                <button type="submit" disabled={saleAdding || !itemName.trim() || !sp || (paymentMethod === 'credit' && !creditName.trim())}
-                  style={{ width: '100%', padding: '14px', background: (saleAdding || !itemName.trim() || !sp || (paymentMethod === 'credit' && !creditName.trim())) ? '#d1fae5' : '#16a34a', color: '#fff', border: 'none', borderRadius: 10, fontSize: 17, fontWeight: 700, cursor: 'pointer' }}>
-                  {saleAdding ? 'Adding...' : '✓ Add Entry'}
+                <button type="submit" disabled={!itemName.trim() || !sp || Number(sp) <= 0}
+                  style={{ width: '100%', padding: '13px', background: !itemName.trim() || !sp || Number(sp) <= 0 ? '#e5e7eb' : '#1e3a5f', color: !itemName.trim() || !sp || Number(sp) <= 0 ? '#9ca3af' : '#fff', border: 'none', borderRadius: 10, fontSize: 16, fontWeight: 700, cursor: 'pointer' }}>
+                  + Add to Bill
                 </button>
               </form>
-            </Card>
+            </div>
 
-            {/* Today's entries */}
+            {/* ── Cart (pending bill) ── */}
+            {cart.length > 0 && (
+              <div style={{ background: '#fff', borderRadius: 14, overflow: 'hidden', boxShadow: '0 2px 12px rgba(0,0,0,0.1)', marginBottom: 10, border: '2px solid #1e3a5f' }}>
+                <div style={{ background: '#1e3a5f', padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>CURRENT BILL — {cart.length} item{cart.length > 1 ? 's' : ''}</span>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: '#93c5fd' }}>{fmt(cartTotal)}</span>
+                </div>
+
+                {/* Cart items */}
+                {cart.map((item, i) => (
+                  <div key={item._id} style={{ display: 'flex', alignItems: 'center', padding: '10px 12px', borderBottom: i < cart.length - 1 ? '1px solid #f3f4f6' : 'none', gap: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 15, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.item_name}</div>
+                      <div style={{ fontSize: 12, color: '#6b7280' }}>{item.qty} {item.unit} × {fmt(item.sp)}</div>
+                    </div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: '#1e3a5f', flexShrink: 0 }}>{fmt(item.qty * item.sp)}</div>
+                    <button onClick={() => removeFromCart(item._id)}
+                      style={{ width: 32, height: 32, background: '#fef2f2', border: 'none', borderRadius: 8, fontSize: 15, cursor: 'pointer', color: '#dc2626', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✕</button>
+                  </div>
+                ))}
+
+                {/* Payment method + save */}
+                <div style={{ padding: '12px' }}>
+                  <div style={{ display: 'flex', background: '#f3f4f6', borderRadius: 10, padding: 3, marginBottom: 10, gap: 3 }}>
+                    {[['cash', '💵 Cash'], ['esewa', '📱 eSewa'], ['credit', '📒 Credit']].map(([val, label]) => (
+                      <button key={val} type="button" onClick={() => setCartPayment(val)}
+                        style={{ flex: 1, padding: '10px 4px', background: cartPayment === val ? '#fff' : 'transparent', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: cartPayment === val ? 700 : 500, color: cartPayment === val ? (val === 'credit' ? '#dc2626' : val === 'esewa' ? '#7c3aed' : '#16a34a') : '#6b7280', boxShadow: cartPayment === val ? '0 1px 6px rgba(0,0,0,0.12)' : 'none', cursor: 'pointer' }}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {cartPayment === 'credit' && (
+                    <input type="text" placeholder="Customer name" value={cartCreditName}
+                      onChange={e => setCartCreditName(e.target.value)}
+                      style={{ width: '100%', padding: '11px 14px', border: '2px solid #fca5a5', borderRadius: 10, fontSize: 15, outline: 'none', marginBottom: 10, background: '#fff7f7', boxSizing: 'border-box' }} />
+                  )}
+
+                  <button onClick={saveCart} disabled={cartSaving || (cartPayment === 'credit' && !cartCreditName.trim())}
+                    style={{ width: '100%', padding: '14px', background: cartSaving || (cartPayment === 'credit' && !cartCreditName.trim()) ? '#9ca3af' : '#16a34a', color: '#fff', border: 'none', borderRadius: 10, fontSize: 17, fontWeight: 800, cursor: 'pointer', letterSpacing: '-0.2px' }}>
+                    {cartSaving ? 'Saving...' : `💾 Save Bill — ${fmt(cartTotal)}`}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* ── Today's saved sales ── */}
             {entries.length > 0 && (
-              <Card style={{ padding: 0, overflow: 'hidden' }}>
-                <div style={{ padding: '12px 16px', borderBottom: '1px solid #f3f4f6' }}>
-                  <SectionTitle>Today's Sales ({entries.length})</SectionTitle>
+              <div style={{ background: '#fff', borderRadius: 14, overflow: 'hidden', boxShadow: '0 1px 8px rgba(0,0,0,0.07)', marginBottom: 10 }}>
+                <div style={{ padding: '11px 14px', borderBottom: '1px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, color: '#6b7280', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Today's Sales ({entries.length})</span>
                 </div>
                 {entries.map((e, i) => (
                   <div key={e.id}>
                     {editId === e.id ? (
-                      <div style={{ padding: '12px 14px', background: '#f0fdf4', display: 'flex', gap: 8, alignItems: 'center' }}>
+                      <div style={{ padding: '10px 12px', background: '#f0fdf4', display: 'flex', gap: 6, alignItems: 'center' }}>
                         <input type="number" value={editQty} onChange={x => setEditQty(x.target.value)} onFocus={x => x.target.select()}
-                          placeholder="Qty" step="any"
-                          style={{ flex: 1, padding: '8px', border: '2px solid #16a34a', borderRadius: 8, fontSize: 15, outline: 'none', textAlign: 'center' }} />
+                          step="any" style={{ flex: 1, padding: '9px 8px', border: '2px solid #16a34a', borderRadius: 8, fontSize: 15, outline: 'none', textAlign: 'center' }} />
                         <input type="number" value={editSp} onChange={x => setEditSp(x.target.value)} onFocus={x => x.target.select()}
-                          placeholder="Price"  step="any"
-                          style={{ flex: 2, padding: '8px', border: '2px solid #16a34a', borderRadius: 8, fontSize: 15, outline: 'none' }} />
-                        <button onClick={() => saveEdit(e.id)} style={{ padding: '8px 12px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: 'pointer' }}>Save</button>
-                        <button onClick={() => setEditId(null)} style={{ padding: '8px 10px', background: '#f3f4f6', border: 'none', borderRadius: 8, fontSize: 13, cursor: 'pointer' }}>✕</button>
+                          step="any" style={{ flex: 2, padding: '9px 10px', border: '2px solid #16a34a', borderRadius: 8, fontSize: 15, outline: 'none' }} />
+                        <button onClick={() => saveEdit(e.id)} style={{ padding: '9px 14px', background: '#16a34a', color: '#fff', border: 'none', borderRadius: 8, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>✓</button>
+                        <button onClick={() => setEditId(null)} style={{ padding: '9px 12px', background: '#f3f4f6', border: 'none', borderRadius: 8, fontSize: 14, cursor: 'pointer' }}>✕</button>
                       </div>
                     ) : (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 14px', borderBottom: i < entries.length - 1 ? '1px solid #f9fafb' : 'none' }}>
-                        <div style={{ flex: 1 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                            <span style={{ fontSize: 15, fontWeight: 600, color: '#111827' }}>{e.item_name}</span>
-                            {e.payment_method === 'esewa' && <span style={{ fontSize: 10, fontWeight: 700, background: '#ede9fe', color: '#7c3aed', borderRadius: 4, padding: '1px 5px' }}>eSewa</span>}
-                            {e.payment_method === 'credit' && <span style={{ fontSize: 10, fontWeight: 700, background: '#fee2e2', color: '#dc2626', borderRadius: 4, padding: '1px 5px' }}>Credit</span>}
+                      <div style={{ display: 'flex', alignItems: 'center', padding: '11px 12px', borderBottom: i < entries.length - 1 ? '1px solid #f9fafb' : 'none', gap: 8 }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: 14, fontWeight: 600, color: '#111827' }}>{e.item_name}</span>
+                            {e.payment_method === 'esewa' && <span style={{ fontSize: 9, fontWeight: 700, background: '#ede9fe', color: '#7c3aed', borderRadius: 4, padding: '2px 5px' }}>eSewa</span>}
+                            {e.payment_method === 'credit' && <span style={{ fontSize: 9, fontWeight: 700, background: '#fee2e2', color: '#dc2626', borderRadius: 4, padding: '2px 5px' }}>Credit</span>}
                           </div>
-                          <div style={{ fontSize: 12, color: '#6b7280', marginTop: 2 }}>
-                            {Number(e.qty)} {e.unit} × {fmt(e.sp)}
-                            {e.credit_name && <span style={{ color: '#dc2626' }}> · {e.credit_name}</span>}
+                          <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 1 }}>
+                            {Number(e.qty)} {e.unit} × {fmt(e.sp)}{e.credit_name ? ` · ${e.credit_name}` : ''}
                           </div>
                         </div>
-                        <div style={{ fontWeight: 700, fontSize: 15, color: e.payment_method === 'credit' ? '#dc2626' : '#1d6e3c', marginRight: 10 }}>{fmt(Number(e.qty) * Number(e.sp))}</div>
-                        <div style={{ display: 'flex', gap: 4 }}>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: e.payment_method === 'credit' ? '#dc2626' : '#1d6e3c', flexShrink: 0 }}>{fmt(Number(e.qty) * Number(e.sp))}</div>
+                        <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
                           <button onClick={() => { setEditId(e.id); setEditQty(String(e.qty)); setEditSp(String(e.sp)); }}
-                            style={{ padding: '6px 10px', background: '#eff6ff', border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', color: '#2563eb' }}>✏️</button>
+                            style={{ width: 34, height: 34, background: '#eff6ff', border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', color: '#2563eb', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>✏️</button>
                           <button onClick={() => deleteEntry(e.id, Number(e.qty) * Number(e.sp))}
-                            style={{ padding: '6px 10px', background: '#fef2f2', border: 'none', borderRadius: 6, fontSize: 13, cursor: 'pointer', color: '#dc2626' }}>🗑️</button>
+                            style={{ width: 34, height: 34, background: '#fef2f2', border: 'none', borderRadius: 7, fontSize: 14, cursor: 'pointer', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>🗑️</button>
                         </div>
                       </div>
                     )}
                   </div>
                 ))}
-                <div style={{ padding: '12px 16px', borderTop: '2px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', background: '#fafafa' }}>
-                  <span style={{ fontSize: 15, fontWeight: 700, color: '#374151' }}>Total</span>
-                  <span style={{ fontSize: 17, fontWeight: 800, color: '#1d6e3c' }}>{fmt(todayTotal)}</span>
+                <div style={{ padding: '11px 14px', borderTop: '2px solid #f3f4f6', display: 'flex', justifyContent: 'space-between', background: '#fafafa' }}>
+                  <span style={{ fontSize: 14, fontWeight: 700, color: '#374151' }}>Total</span>
+                  <span style={{ fontSize: 16, fontWeight: 800, color: '#1d6e3c' }}>{fmt(todayTotal)}</span>
                 </div>
-              </Card>
+              </div>
             )}
 
-            {entries.length === 0 && (
-              <div style={{ textAlign: 'center', padding: '3rem 1rem', color: '#9ca3af' }}>
-                <div style={{ fontSize: 48, marginBottom: 12 }}>🛒</div>
-                <div style={{ fontSize: 16 }}>No sales yet today</div>
-                <div style={{ fontSize: 14, marginTop: 6 }}>Add your first item above</div>
+            {entries.length === 0 && cart.length === 0 && (
+              <div style={{ textAlign: 'center', padding: '2.5rem 1rem', color: '#9ca3af' }}>
+                <div style={{ fontSize: 44, marginBottom: 10 }}>🛒</div>
+                <div style={{ fontSize: 16, fontWeight: 600 }}>No sales yet today</div>
+                <div style={{ fontSize: 13, marginTop: 6 }}>Add items above to start a bill</div>
               </div>
             )}
           </div>
@@ -1211,10 +1245,10 @@ export default function Dashboard() {
         <div style={{ position: 'fixed', bottom: 0, left: '50%', transform: 'translateX(-50%)', width: '100%', maxWidth: 520, background: 'rgba(255,255,255,0.97)', backdropFilter: 'blur(12px)', borderTop: '1px solid #e5e7eb', display: 'flex', zIndex: 50 }}>
           {NAV.map(n => (
             <button key={n.key} onClick={() => setTab(n.key)}
-              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '9px 0 10px', background: 'none', border: 'none', cursor: 'pointer', position: 'relative' }}>
-              {tab === n.key && <div style={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', width: 24, height: 2.5, background: '#1e3a5f', borderRadius: '0 0 3px 3px' }} />}
-              <span style={{ fontSize: 20 }}>{n.icon}</span>
-              <span style={{ fontSize: 10, marginTop: 2, fontWeight: tab === n.key ? 700 : 500, color: tab === n.key ? '#1e3a5f' : '#9ca3af', letterSpacing: '0.2px' }}>{n.label}</span>
+              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '8px 0 10px', background: 'none', border: 'none', cursor: 'pointer', position: 'relative', minWidth: 0 }}>
+              {tab === n.key && <div style={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', width: 20, height: 2.5, background: '#1e3a5f', borderRadius: '0 0 3px 3px' }} />}
+              <span style={{ fontSize: 18 }}>{n.icon}</span>
+              <span style={{ fontSize: 9, marginTop: 2, fontWeight: tab === n.key ? 700 : 500, color: tab === n.key ? '#1e3a5f' : '#9ca3af', letterSpacing: '0.1px', whiteSpace: 'nowrap' }}>{n.label}</span>
             </button>
           ))}
         </div>
