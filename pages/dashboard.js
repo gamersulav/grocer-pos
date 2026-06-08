@@ -111,11 +111,30 @@ export default function Dashboard() {
   const itemNameRef = useRef(null);
 
   // Cart state — items added locally before "Save Bill"
-  const [cart, setCart] = useState([]);
-  const [cartPayment, setCartPayment] = useState('cash');
-  const [cartCreditName, setCartCreditName] = useState('');
+  const [cart, setCart] = useState(() => {
+    if (typeof window === 'undefined') return [];
+    try { const s = localStorage.getItem('gpCart'); return s ? JSON.parse(s) : []; } catch { return []; }
+  });
+  const [cartPayment, setCartPayment] = useState(() => {
+    if (typeof window === 'undefined') return 'cash';
+    return localStorage.getItem('gpCartPay') || 'cash';
+  });
+  const [cartCreditName, setCartCreditName] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    return localStorage.getItem('gpCartCredit') || '';
+  });
   const [cartSaving, setCartSaving] = useState(false);
   const cartTotal = cart.reduce((s, i) => s + i.qty * i.sp, 0);
+
+  useEffect(() => {
+    try { localStorage.setItem('gpCart', JSON.stringify(cart)); } catch {}
+  }, [cart]);
+  useEffect(() => {
+    try { localStorage.setItem('gpCartPay', cartPayment); } catch {}
+  }, [cartPayment]);
+  useEffect(() => {
+    try { localStorage.setItem('gpCartCredit', cartCreditName); } catch {}
+  }, [cartCreditName]);
 
   const loadSaleEntries = useCallback(async () => {
     const r = await fetch(`/api/sales?date=${today}`);
@@ -170,6 +189,8 @@ export default function Dashboard() {
       setTodayTotal(prev => prev + saved.reduce((s, e) => s + Number(e.qty) * Number(e.sp), 0));
       setCart([]);
       setCartCreditName('');
+      setCartPayment('cash');
+      try { localStorage.removeItem('gpCart'); localStorage.removeItem('gpCartPay'); localStorage.removeItem('gpCartCredit'); } catch {}
       showToast(`${saved.length} item${saved.length > 1 ? 's' : ''} saved ✓`);
     }
     setCartSaving(false);
@@ -214,7 +235,11 @@ export default function Dashboard() {
     const r = await fetch(`/api/eod?date=${date}`);
     if (r.status === 401) { router.push('/'); return; }
     const data = await r.json();
-    setEodGroups(data.map(g => ({ ...g, cpInput: g.cp != null ? String(g.cp) : '' })));
+    setEodGroups(data.map(g => ({
+      ...g,
+      cpInput: g.cp != null ? String(g.cp) : (g.last_cp != null ? String(g.last_cp) : ''),
+      cpFromMemory: g.cp == null && g.last_cp != null,
+    })));
     setEodLoading(false);
   }, [router]);
 
@@ -527,10 +552,19 @@ export default function Dashboard() {
                     <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#fff', border: '1px solid #e5e7eb', borderRadius: 10, boxShadow: '0 6px 24px rgba(0,0,0,0.12)', zIndex: 100, maxHeight: 200, overflowY: 'auto' }}>
                       {filteredSuggestions.map((item, i) => (
                         <div key={i}
-                          onMouseDown={() => { setItemName(item.item_name); setUnit(item.unit || 'pcs'); setShowSuggestions(false); setTimeout(() => document.getElementById('qty-input')?.focus(), 50); }}
-                          style={{ padding: '12px 14px', fontSize: 15, cursor: 'pointer', borderBottom: i < filteredSuggestions.length - 1 ? '1px solid #f3f4f6' : 'none', display: 'flex', justifyContent: 'space-between' }}>
+                          onMouseDown={() => {
+                            setItemName(item.item_name);
+                            setUnit(item.unit || 'pcs');
+                            if (item.last_sp != null) setSp(String(item.last_sp));
+                            setShowSuggestions(false);
+                            setTimeout(() => document.getElementById('qty-input')?.focus(), 50);
+                          }}
+                          style={{ padding: '12px 14px', fontSize: 15, cursor: 'pointer', borderBottom: i < filteredSuggestions.length - 1 ? '1px solid #f3f4f6' : 'none', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <span style={{ fontWeight: 500 }}>{item.item_name}</span>
-                          <span style={{ fontSize: 12, color: '#9ca3af' }}>{item.unit}</span>
+                          <div style={{ textAlign: 'right' }}>
+                            {item.last_sp != null && <div style={{ fontSize: 13, fontWeight: 700, color: '#16a34a' }}>{fmt(item.last_sp)}</div>}
+                            <div style={{ fontSize: 11, color: '#9ca3af' }}>{item.unit}</div>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -710,7 +744,12 @@ export default function Dashboard() {
                           )}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontSize: 13, color: '#6b7280', flexShrink: 0 }}>Cost/unit:</span>
+                          <div style={{ flexShrink: 0 }}>
+                            <div style={{ fontSize: 13, color: '#6b7280' }}>Cost/unit</div>
+                            {g.cpFromMemory && g.cpInput !== '' && (
+                              <div style={{ fontSize: 10, color: '#f59e0b', fontWeight: 600 }}>remembered</div>
+                            )}
+                          </div>
                           <input
                             type="number"
                             placeholder="Rs 0.00"
@@ -719,7 +758,7 @@ export default function Dashboard() {
                             onFocus={e => e.target.select()}
                             min="0"
                             step="any"
-                            style={{ flex: 1, padding: '10px 12px', border: `2px solid ${g.cpInput !== '' ? '#16a34a' : '#e5e7eb'}`, borderRadius: 8, fontSize: 16, outline: 'none' }}
+                            style={{ flex: 1, padding: '10px 12px', border: `2px solid ${g.cpFromMemory && g.cpInput !== '' ? '#f59e0b' : g.cpInput !== '' ? '#16a34a' : '#e5e7eb'}`, borderRadius: 8, fontSize: 16, outline: 'none' }}
                           />
                         </div>
                       </div>
@@ -836,7 +875,7 @@ export default function Dashboard() {
                         { label: 'Opening Balance', value: cashData.opening, color: '#1e3a5f', bold: false },
                         { label: '+ Cash Sales', value: cashData.cash_revenue, color: '#16a34a', bold: false },
                         { label: '+ Credits Collected (Cash)', value: cashData.cleared_cash, color: '#16a34a', bold: false },
-                        { label: '- General Expenses', value: cashData.gen_expenses, color: '#dc2626', bold: false },
+                        { label: '- Expenses', value: cashData.total_expenses, color: '#dc2626', bold: false },
                       ].map(row => (
                         <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 0', borderBottom: '1px solid #f3f4f6' }}>
                           <span style={{ fontSize: 14, color: '#374151' }}>{row.label}</span>

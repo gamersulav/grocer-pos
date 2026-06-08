@@ -35,9 +35,9 @@ export default async function handler(req, res) {
       FROM credit_clearances WHERE cleared_date=?
     `, [date]);
 
-    // General expenses (reduce physical cash)
+    // All expenses (general + cogs) reduce physical cash in the till
     const expRow = await db.queryOne(
-      "SELECT COALESCE(SUM(amount), 0) as gen_exp FROM expenses WHERE expense_date=? AND type='general'",
+      'SELECT COALESCE(SUM(amount), 0) as total_exp FROM expenses WHERE expense_date=?',
       [date]
     );
 
@@ -55,7 +55,7 @@ export default async function handler(req, res) {
       FROM credit_clearances WHERE cleared_date=?
     `, [yesterday]);
     const yestExp = await db.queryOne(
-      "SELECT COALESCE(SUM(amount), 0) as gen_exp FROM expenses WHERE expense_date=? AND type='general'",
+      'SELECT COALESCE(SUM(amount), 0) as total_exp FROM expenses WHERE expense_date=?',
       [yesterday]
     );
 
@@ -64,22 +64,22 @@ export default async function handler(req, res) {
     const credit_given = Number(salesByMethod.credit_given);
     const cleared_cash = Number(clearRow.cleared_cash);
     const cleared_esewa = Number(clearRow.cleared_esewa);
-    const gen_expenses = Number(expRow.gen_exp);
+    const total_expenses = Number(expRow.total_exp);
 
     const cash_in = cash_revenue + cleared_cash;
     const esewa_in = esewa_revenue + cleared_esewa;
 
     const opening = todayLedger ? Number(todayLedger.opening) : null;
-    const closing = opening !== null ? opening + cash_in - gen_expenses : null;
+    const closing = opening !== null ? opening + cash_in - total_expenses : null;
 
     let suggested_opening = null;
     if (opening === null && yestLedger) {
       const yCashIn = Number(yestSales.cash_rev) + Number(yestCleared.cleared_cash);
-      suggested_opening = Number(yestLedger.opening) + yCashIn - Number(yestExp.gen_exp);
+      suggested_opening = Number(yestLedger.opening) + yCashIn - Number(yestExp.total_exp);
     }
 
     return res.json({
-      date, opening, closing, gen_expenses, suggested_opening,
+      date, opening, closing, total_expenses, suggested_opening,
       cash_revenue, esewa_revenue, credit_given,
       cleared_cash, cleared_esewa, cash_in, esewa_in,
     });

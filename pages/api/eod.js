@@ -12,16 +12,20 @@ export default async function handler(req, res) {
     // Group by item_name: total qty, total revenue, and current cp (if set)
     const rows = await db.query(`
       SELECT
-        item_name,
-        unit,
-        SUM(qty) as total_qty,
-        SUM(qty * sp) as total_sp,
-        MAX(cp) as cp
-      FROM sale_entries
-      WHERE entry_date = ?
-      GROUP BY item_name, unit
-      ORDER BY item_name ASC
-    `, [date]);
+        s1.item_name,
+        s1.unit,
+        SUM(s1.qty) as total_qty,
+        SUM(s1.qty * s1.sp) as total_sp,
+        MAX(s1.cp) as cp,
+        (SELECT s2.cp FROM sale_entries s2
+         WHERE s2.item_name = s1.item_name AND s2.unit = s1.unit
+           AND s2.cp IS NOT NULL AND s2.entry_date < ?
+         ORDER BY s2.entry_date DESC, s2.id DESC LIMIT 1) as last_cp
+      FROM sale_entries s1
+      WHERE s1.entry_date = ?
+      GROUP BY s1.item_name, s1.unit
+      ORDER BY s1.item_name ASC
+    `, [date, date]);
     return res.json(rows);
   }
 
